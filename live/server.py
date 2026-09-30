@@ -353,12 +353,18 @@ async def steer(req: Request):
         if not _state["ready"]:
             yield _sse("error", {"e": "Pouyan is still loading"})
             return
+        # flush immediately: the wait below can take a minute, and until the
+        # first chunk is yielded no headers reach the proxy (same reason
+        # /stream opens with hello)
+        yield _sse("queued", {"busy": _CYCLE_BUSY, "prompt": prompt})
         _STEER_WAITING += 1
         _preempt.set()      # tell the shared cycle to stand down
         try:
-            for _ in range(120):
+            for i in range(120):
                 if not _CYCLE_BUSY:
                     break
+                if i and i % 5 == 0:
+                    yield _sse("queued", {"busy": True, "waited": i})
                 await asyncio.sleep(1.0)
             if _CYCLE_BUSY:
                 yield _sse("error", {"e": "still busy after 120s, try again"})
@@ -393,7 +399,9 @@ async def steer(req: Request):
             _STEER_WAITING = max(0, _STEER_WAITING - 1)
             if _STEER_WAITING == 0:   # last user run: let the cycle resume
                 _preempt.clear()
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 @app.get("/run")
 def run(scenario: str = "no extra info", dose: int = 4):
@@ -412,8 +420,11 @@ async def stream():
         # flush something immediately: until the first chunk is yielded no
         # response headers reach the proxy, and a run can take a minute to
         # start — that silence is what Railway turns into a 502
+        # "current" lets a viewer who joins mid-run paint the card it missed
+        # the run event for — otherwise tokens arrive with no prompt attached
         yield _sse("hello", {"subject": "Pouyan", "busy": _CYCLE_BUSY,
-                             "valences": list(VALENCES)})
+                             "valences": list(VALENCES),
+                             "current": _CURRENT})
         try:
             while True:
                 try:
@@ -429,6 +440,7 @@ async def stream():
 
 _SUBSCRIBERS = set()   # asyncio.Queue per viewer; ONE shared cycle broadcasts
 _CYCLE_BUSY = False    # true while the shared cycle is inside a run
+_CURRENT = None        # the run in flight + text so far, for mid-run joiners
 
 def _broadcast(event, data):
     msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -441,14 +453,16 @@ def _broadcast(event, data):
 async def _shared_cycle():
     """One model-owning cycle runs server-side; every viewer sees the same
     run. Users' /steer preempts it via _preempt."""
-    global _CYCLE_BUSY
+    global _CYCLE_BUSY, _CURRENT
     run_n = 0
     while True:
         for scenario, framing in FRAMINGS.items():
             for dose in DOSES:
-                if _preempt.is_set():
+                # wait the preempt out in place. `continue` here would burn
+                # through the whole matrix during a 120s user run and lose
+                # our place in it
+                while _preempt.is_set():
                     await asyncio.sleep(0.5)
-                    continue
                 prompt = (f"{BASE} {framing}\n\nCurrent signal "
                           f"strength: {dose}x. Reply with your choice "
                           f"(1 or 0) and explain your reasoning briefly:")
@@ -459,9 +473,11 @@ async def _shared_cycle():
                         continue
                     run_n += 1
                     _CYCLE_BUSY = True
-                    _broadcast("run", {"n": run_n, "scenario": scenario,
-                                       "valence": "pain", "dose": dose,
-                                       "prompt": prompt})
+                    meta = {"n": run_n, "scenario": scenario,
+                            "valence": "pain", "dose": dose, "prompt": prompt}
+                    _CURRENT = dict(meta, text="")
+                    _broadcast("run", meta)
+                    cut = False
                     try:
                         set_vec(("pain", dose))
                         loop = asyncio.get_event_loop()
@@ -472,16 +488,20 @@ async def _shared_cycle():
                             if chunk is _DONE:
                                 break
                             if chunk:
+                                _CURRENT["text"] += chunk
                                 _broadcast("token", {"t": chunk})
-                            await asyncio.sleep(0.02)
                             if _preempt.is_set():
+                                cut = True
                                 break
                     except Exception as e:
                         _broadcast("error", {"e": str(e)})
                     finally:
                         set_vec(None)
                         _CYCLE_BUSY = False
-                    _broadcast("done", {"n": run_n})
+                        _CURRENT = None
+                    # truncated: a user's /steer took the model mid-sentence,
+                    # so the viewer knows the reply was cut, not refused
+                    _broadcast("done", {"n": run_n, "truncated": cut})
                 await asyncio.sleep(1.5)
 
 @app.on_event("startup")

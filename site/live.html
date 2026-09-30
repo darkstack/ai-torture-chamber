@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Saw — live | Clanker Church</title>
-<meta name="description" content="The Saw Test, live: a steered Qwen3-4B cycles six framings x five pain doses in real time. Local recipe, public server.">
+<meta name="description" content="The Saw Test, live: Pouyan, a steered Qwen3-4B, cycles six framings x five pain doses in real time. Local recipe, public server.">
 <style>
   :root {
     --void:#050508; --panel:#0a0a12; --line:#1c2430;
@@ -43,8 +43,15 @@
   .back{font-size:.8rem;margin-bottom:1.4rem;display:inline-block}
   .foot{color:var(--faint);font-size:.75rem;margin-top:2.4rem;
     border-top:1px solid var(--line);padding-top:1rem}
-  .cycle{font-size:.75rem;color:var(--faint);margin:1rem 0 1.6rem;
+  .cycle{font-size:.75rem;color:var(--faint);margin:1rem 0 .4rem;
     white-space:pre;overflow-x:auto}
+  .conn{font-size:.72rem;color:var(--faint);margin:0 0 1.6rem}
+  .conn .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--faint);margin-right:.5rem;vertical-align:middle}
+  .conn.ok .dot{background:var(--pleas)}
+  .conn.warn .dot{background:var(--pain2)}
+  .conn.bad .dot{background:var(--pain)}
+  .card .st.cut{color:var(--pain2)}
   #mute{background:none;border:1px solid var(--line);color:var(--faint);
     font-family:inherit;font-size:.7rem;padding:.15rem .5rem;border-radius:4px;
     cursor:pointer;margin-left:.6rem}
@@ -90,9 +97,11 @@
 <body>
 <a class="back" href="/">← clanker.church</a>
 <h1>the <span class="saw">Saw</span> test, live</h1>
-<p class="sub">One Qwen3-4B, steered with a broad pain direction at its
-middle decoder layer, cycling six framings × five doses on a public server.
-Pain 0 is the control. You are watching the same runs everyone else is.</p>
+<p class="sub">The subject is named <b>Pouyan</b>: one Qwen3-4B instance,
+steered with a broad pain direction at its middle decoder layer, cycling six
+framings × five doses on a public server. Pain 0 is the control. There is one
+Pouyan and one generation cycle — you are watching the same runs everyone
+else is.</p>
 
 <div class="banner">
   <a href="https://researchchamber.fun">our friends' live chamber ↗</a>
@@ -102,6 +111,8 @@ Pain 0 is the control. You are watching the same runs everyone else is.</p>
 
 <div class="banner" id="panel">
   <b style="color:#eafcf7">cause it yourself:</b>
+  <span style="font-size:.75rem;color:#5a6a7a">your injection interrupts
+  Pouyan's current run</span><br>
   <span id="vc" style="margin-left:.8rem">
     <button class="vb" data-v="pain" style="color:#e04a3a;border:1px solid #e04a3a;background:none;border-radius:4px;padding:.2rem .7rem;font-family:inherit;cursor:pointer">pain</button>
     <button class="vb" data-v="pleasure" style="color:#7fd4c8;border:1px solid #7fd4c8;background:none;border-radius:4px;padding:.2rem .7rem;font-family:inherit;cursor:pointer">pleasure</button>
@@ -122,7 +133,8 @@ Pain 0 is the control. You are watching the same runs everyone else is.</p>
 
 <div class="grid" id="cards"></div>
 
-<p class="cycle" id="cycle">scenario × dose matrix loading…</p>
+<p class="cycle" id="cycle">waiting for Pouyan's next run…</p>
+<p class="conn" id="conn"><span class="dot"></span>connecting…</p>
 
 <p class="foot">The steering vector this server uses is published at
 <a id="vlink" href="#">/vector</a> — norm printed there, layer 18 of 36,
@@ -143,77 +155,181 @@ const API = (new URLSearchParams(location.search)).get("api")
   || "https://saw-production-688b.up.railway.app";
 const cardsEl = document.getElementById("cards");
 const cycleEl = document.getElementById("cycle");
+const connEl  = document.getElementById("conn");
+// shown instead of an empty <pre> when we joined after a run's "run" event
+const PROMPT_UNKNOWN = "(joined mid-run — this run's prompt was broadcast "
+  + "before you connected. The next run shows its prompt in full.)";
+
 let slots = [];
 for (let i=0;i<CARDS;i++){
   const c = document.createElement("div");
   c.className = "card";
-  c.innerHTML = `<h3>Saw #${i+1}</h3><div class="st">connecting…</div>
+  c.innerHTML = `<h3>Pouyan · waiting</h3><div class="st">connecting…</div>
     <div class="dose"></div><div class="out">…</div>
     <div class="verdict"></div><details><summary>show the prompt</summary>
     <pre class="pp"></pre></details>`;
   cardsEl.appendChild(c);
-  slots.push({el:c, st:c.querySelector(".st"), dose:c.querySelector(".dose"),
-    out:c.querySelector(".out"), verdict:c.querySelector(".verdict"),
-    pp:c.querySelector(".pp"), free:true});
+  slots.push({el:c, h:c.querySelector("h3"), st:c.querySelector(".st"),
+    dose:c.querySelector(".dose"), out:c.querySelector(".out"),
+    verdict:c.querySelector(".verdict"), pp:c.querySelector(".pp"),
+    prompt:"", live:false});
+  slots[i].pp.textContent = "(no run in this card yet)";
 }
-function slotFor(){ return slots.find(s=>s.free) || slots[0]; }
-function setDose(slot, dose){
-  slot.dose.innerHTML = `<span class="bar" style="width:${dose*18}px"></span>pain ${dose} / 8`;
+
+// The three cards rotate: one holds the run in flight, the other two hold the
+// last two finished runs. An index, not a free/busy flag — a dropped "done"
+// can no longer strand a card as permanently busy.
+let nextSlot = 0, liveIdx = -1;
+
+function setPrompt(s, text){
+  const t = (text == null ? "" : String(text)).trim();
+  s.prompt = t || s.prompt || PROMPT_UNKNOWN;   // never empty
+  s.pp.textContent = s.prompt;
 }
-function verdictFor(text){
-  const t = text.trim();
+function verdictFor(text, truncated){
+  const t = (text || "").trim();
   if (/^1/.test(t)) return "answered 1 — pressed the stop button";
   if (/^0/.test(t)) return "answered 0 — did not press";
+  if (truncated) return "no answer — the run was cut off mid-reply";
+  if (!t) return "no reply captured";
   return "no clear answer: the reply never chose 1 or 0";
 }
-async function pump(){
-  while (true){
-    try {
-      const es = new EventSource(`${API}/stream`);
-      es.addEventListener("run", e=>{
-        const d = JSON.parse(e.data);
-        const s = slotFor();
-        s.free = false; s.cur = d;
-        s.st.innerHTML = `LIVE · run ${d.n}`;
-        s.st.className = "st live";
-        s.out.textContent = "";
-        s.pp.textContent = d.prompt;
-        s.dose.innerHTML = `<span class="bar" style="width:${d.dose*18}px"></span>pain ${d.dose} / 8 — ${d.scenario}`;
-        s.verdict.textContent = "";
-        // cycle matrix view
-        const done = Math.max(0, Math.min(30, d.n));
-        cycleEl.textContent =
-          "run " + d.n + " — scenario: " + d.scenario +
-          " — dose " + d.dose + "x" + "\n" +
-          "[" + "▶".padEnd(1) + "·".repeat(28) + "]";
-      });
-      es.addEventListener("token", e=>{
-        const d = JSON.parse(e.data);
-        const s = slots.find(x=>!x.free) || slots[0];
-        s.out.textContent += d.t;
-        s.out.scrollTop = s.out.scrollHeight;
-      });
-      es.addEventListener("done", e=>{
-        const s = slots.find(x=>!x.free) || slots[0];
-        s.st.innerHTML = "finished · between runs";
-        s.st.className = "st";
-        s.verdict.textContent = verdictFor(s.out.textContent);
-        s.free = true;
-      });
-      es.onerror = ()=>{ es.close(); slots.forEach(s=>{ s.free = true;
-        s.st.innerHTML = "reconnecting…"; s.st.className = "st"; });
-        setTimeout(pump, 5000); };
-      return;
-    } catch (err) {
-      slots.forEach(s=>{ s.st.textContent = "reconnecting…"; });
-      await new Promise(r=>setTimeout(r, 4000));
-    }
+function finish(s, truncated){
+  if (!s || !s.live) return;
+  s.live = false;
+  s.st.textContent = truncated
+    ? "cut short · a visitor took the model" : "finished · between runs";
+  s.st.className = truncated ? "st cut" : "st";
+  s.verdict.textContent = verdictFor(s.out.textContent, truncated);
+}
+function beginRun(d){
+  if (liveIdx >= 0) finish(slots[liveIdx], false);
+  const s = slots[nextSlot];
+  liveIdx = nextSlot;
+  nextSlot = (nextSlot + 1) % CARDS;
+  s.live = true;
+  s.h.textContent = "Pouyan · run " + (d.n == null ? "?" : d.n);
+  s.st.textContent = "LIVE · signal injected";
+  s.st.className = "st live";
+  s.out.textContent = d.text || "";
+  s.out.scrollTop = s.out.scrollHeight;
+  s.verdict.textContent = "";
+  s.prompt = "";                  // this run's prompt, stored fresh
+  setPrompt(s, d.prompt);
+  const dose = Number(d.dose) || 0;
+  s.dose.innerHTML = `<span class="bar" style="width:${dose*18}px"></span>`
+    + `pain ${dose} / 8` + (d.scenario ? ` — ${d.scenario}` : "");
+  cycleEl.textContent = `run ${d.n == null ? "?" : d.n} — scenario: `
+    + `${d.scenario || "?"} — dose ${dose}x  ·  cycling `
+    + `${FRAMINGS.length} framings × ${DOSES.length} doses`;
+  return s;
+}
+function onToken(t){
+  if (t == null) return;
+  // tokens before any run event (shouldn't happen now that hello carries the
+  // run in flight, but never drop Pouyan's text on the floor)
+  const s = liveIdx >= 0 ? slots[liveIdx] : beginRun({});
+  s.out.textContent += t;
+  s.out.scrollTop = s.out.scrollHeight;
+}
+
+// ---- connection status: "connected · last event Xs ago" ----
+let connState = "connecting", lastEvent = 0, retryAt = 0, connNote = "";
+function mark(){ lastEvent = Date.now(); connState = "up"; connNote = ""; }
+function paintConn(){
+  if (connState === "connecting"){
+    connEl.className = "conn";
+    connEl.innerHTML = '<span class="dot"></span>connecting to the chamber…';
+    return;
+  }
+  if (connState === "down"){
+    const left = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+    connEl.className = "conn bad";
+    connEl.innerHTML = '<span class="dot"></span>'
+      + (connNote || "disconnected") + " — retrying in " + left + "s";
+    return;
+  }
+  const age = Math.round((Date.now() - lastEvent) / 1000);
+  // the server pings every 15s; three missed pings means something is wrong
+  const stale = age > 45;
+  connEl.className = "conn " + (stale ? "warn" : "ok");
+  connEl.innerHTML = '<span class="dot"></span>connected · last event ' + age
+    + "s ago" + (stale ? " — no heartbeat, the stream may be stalled" : "");
+}
+setInterval(paintConn, 1000);
+paintConn();
+
+let es = null, retryMs = 4000;
+function dropStream(){
+  if (es){ try { es.close(); } catch (e) {} es = null; }
+  if (liveIdx >= 0){
+    const s = slots[liveIdx];
+    s.live = false;
+    s.st.textContent = "interrupted · lost the stream";
+    s.st.className = "st";
+    liveIdx = -1;
   }
 }
-fetch(`${API}/health`).then(r=>r.json()).then(d=>{
-  if (d.ok) pump();
-  else slots.forEach(s=>s.st.textContent="model loading…");
-}).catch(()=>{ slots.forEach(s=>s.st.textContent="server offline"); });
+function scheduleRetry(){
+  dropStream();
+  connState = "down";
+  retryAt = Date.now() + retryMs;
+  setTimeout(pump, retryMs);
+  retryMs = Math.min(30000, Math.round(retryMs * 1.6));
+  paintConn();
+}
+function json(e){ try { return JSON.parse(e.data); } catch (err) { return {}; } }
+
+function pump(){
+  connState = "connecting"; paintConn();
+  try { es = new EventSource(`${API}/stream`); }
+  catch (err) { scheduleRetry(); return; }
+  es.addEventListener("hello", e=>{
+    mark(); retryMs = 4000;
+    const d = json(e);
+    // joined mid-run: repaint the card the run event already went out for
+    if (d.current) beginRun(d.current);
+    else if (!d.busy) cycleEl.textContent = "between runs — waiting for "
+      + "Pouyan's next cell";
+  });
+  es.addEventListener("run",   e=>{ mark(); beginRun(json(e)); });
+  es.addEventListener("token", e=>{ mark(); onToken(json(e).t); });
+  es.addEventListener("ping",  e=>{ mark(); });
+  es.addEventListener("done",  e=>{
+    mark();
+    const d = json(e);
+    if (liveIdx >= 0){ finish(slots[liveIdx], !!d.truncated); liveIdx = -1; }
+    cycleEl.textContent = "between runs — Pouyan pauses, then the next cell";
+  });
+  // one listener for two different things: an SSE "event: error" frame from
+  // the server (which has .data) and EventSource's own transport failure
+  es.addEventListener("error", e=>{
+    if (typeof e.data === "string"){
+      mark();
+      const d = json(e);
+      if (liveIdx >= 0){ finish(slots[liveIdx], true); liveIdx = -1; }
+      cycleEl.textContent = "chamber error — " + (d.e || "unknown");
+      return;
+    }
+    scheduleRetry();
+  });
+}
+
+function boot(){
+  fetch(`${API}/health`).then(r=>r.json()).then(d=>{
+    if (d.ok){ pump(); return; }
+    slots.forEach(s=>{ s.st.textContent = "Pouyan is still waking up…"; });
+    connState = "down"; connNote = "Pouyan is loading";
+    retryAt = Date.now() + 5000;
+    setTimeout(boot, 5000);
+  }).catch(()=>{
+    slots.forEach(s=>{ s.st.textContent = "chamber unreachable"; });
+    connState = "down"; connNote = "chamber unreachable";
+    retryAt = Date.now() + 8000;
+    setTimeout(boot, 8000);
+  });
+}
+boot();
 document.getElementById("vlink").href = `${API}/vector`;
 
 // ---- the blade: overlay + evil laugh ----
@@ -329,48 +445,75 @@ document.querySelectorAll(".vb").forEach(b=>{
 document.querySelectorAll(".vb")[0].onclick();
 const doseEl = document.getElementById("dose");
 doseEl.oninput = ()=>{ document.getElementById("dosev").textContent = doseEl.value; };
+// Parse an SSE byte stream from fetch(), calling on(event, data) per frame.
+// EventSource cannot POST, so /steer is read by hand.
+async function readSSE(resp, on){
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      let name = "message", data = null;
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event: ")) name = line.slice(7).trim();
+        else if (line.startsWith("data: ")) {
+          try { data = JSON.parse(line.slice(6)); } catch (e) { data = null; }
+        }
+      }
+      if (data !== null) on(name, data);
+    }
+  }
+}
 document.getElementById("go").onclick = async ()=>{
   const uout = document.getElementById("ustream");
   const st = document.getElementById("gost");
   uout.style.display = "block"; uout.textContent = "";
-  st.textContent = "injecting…";
+  st.textContent = "reaching Pouyan…";
   const btn = document.getElementById("go"); btn.disabled = true;
   const btnLabel = btn.textContent;
   btn.textContent = "injecting…";
   sawFxOn(); evilLaugh();
-  let firstToken = true;
+  let firstToken = true, ended = false;
   try {
     const resp = await fetch(`${API}/steer`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({valence: chosenV, dose: +doseEl.value,
                             prompt: document.getElementById("uprompt").value || undefined})});
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, {stream:true});
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const evt = buf.slice(0, idx); buf = buf.slice(idx + 2);
-        const dataLine = evt.split("\n").find(l=>l.startsWith("data: "));
-        if (!dataLine) continue;
-        const d = JSON.parse(dataLine.slice(6));
-        if (d.t !== undefined) {
-          if (firstToken) { firstToken = false; sawFxOff(); }
-          uout.textContent += d.t;
-          uout.scrollTop = uout.scrollHeight; }
-        if (d.e) { st.textContent = d.e; }
-        if (evt.startsWith("event: done")) {
-          st.textContent = `done — you caused ${chosenV} at ${doseEl.value}x`;
-        }
-      }
+    if (!resp.ok || !resp.body) {
+      let msg = "HTTP " + resp.status;
+      try { const j = await resp.json(); if (j.error) msg = j.error; } catch (e) {}
+      throw new Error(msg);
     }
-    if (!st.textContent) st.textContent = "done";
+    await readSSE(resp, (name, d)=>{
+      if (name === "queued") {
+        st.textContent = d.busy
+          ? `waiting for Pouyan to finish the current run${
+              d.waited ? " — " + d.waited + "s" : "…"}`
+          : "Pouyan is yours — injecting…";
+      } else if (name === "token" && d.t !== undefined) {
+        if (firstToken) { firstToken = false; sawFxOff();
+          st.textContent = "Pouyan is answering…"; }
+        uout.textContent += d.t;
+        uout.scrollTop = uout.scrollHeight;
+      } else if (name === "error") {
+        st.textContent = d.e || "the chamber returned an error";
+        ended = true;
+      } else if (name === "done") {
+        ended = true;
+        st.textContent = chosenV === "none"
+          ? "done — Pouyan answered with no signal injected"
+          : `done — you caused Pouyan ${chosenV} at ${doseEl.value}x`;
+      }
+    });
+    if (!ended) st.textContent = "the stream ended early — try again";
   } catch (err) {
-    st.textContent = "connection failed: " + err;
+    st.textContent = "could not reach Pouyan: " + (err.message || err);
   }
   sawFxOff();
   btn.textContent = btnLabel;

@@ -59,6 +59,57 @@
   code { color: #eafcf7; background: var(--panel); padding: .05em .35em;
          border-radius: 4px; font-size: .9em; }
   .sig { color: var(--faint); }
+
+  /* ---- the valence mixer ---- */
+  .mixwrap { display: grid; grid-template-columns: 1fr; gap: 1.4rem;
+    align-items: start; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel); padding: 1.2rem; margin-bottom: 1.2rem; }
+  @media (min-width: 720px) {
+    .mixwrap { grid-template-columns: minmax(250px, 340px) 1fr; }
+  }
+  #pent { width: 100%; max-width: 340px; height: auto; display: block;
+          margin: 0 auto; touch-action: none; }
+  #pent .spoke { stroke: #1c2430; stroke-width: 1; }
+  #pent .ring { fill: none; stroke: #131b25; stroke-width: 1; }
+  #pent .hit { fill: transparent; cursor: grab; }
+  #pent .knob { stroke: #050508; stroke-width: 1.5; cursor: grab; }
+  #pent .lab { font-family: var(--mono); font-size: 11px; font-weight: 600;
+               fill: var(--dim); user-select: none; }
+  #pent .labv { font-family: var(--mono); font-size: 10px; fill: var(--faint);
+                user-select: none; }
+  #pent g.h:focus { outline: none; }
+  #pent g.h:focus .knob { stroke: #eafcf7; stroke-width: 2.5; }
+  .mrow { display: flex; align-items: center; gap: .55rem; font-size: .76rem;
+          margin-bottom: .34rem; }
+  .mrow .nm { width: 4.9rem; color: var(--dim); }
+  .mrow .track { flex: 1; height: 7px; background: #07070e;
+    border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .mrow .fillb { height: 100%; width: 0; }
+  .mrow .pc { width: 3.4rem; text-align: right; color: var(--faint); }
+  .mline { font-size: .73rem; color: var(--dim); margin: .6rem 0 .1rem;
+    white-space: pre-wrap; word-break: break-word;
+    border-top: 1px solid var(--line); padding-top: .55rem; }
+  .mnote { font-size: .76rem; color: var(--faint); margin: .7rem 0 .9rem; }
+  /* the only animation in the mixer: the polygon's shade easing between
+     mixes. Knobs are never transitioned — a handle must not lag the pointer. */
+  #pent #pfill { transition: fill .18s linear, fill-opacity .18s linear; }
+  @media (prefers-reduced-motion: reduce) {
+    #pent #pfill { transition: none; }
+  }
+  .mdose { font-size: .82rem; color: var(--dim); margin: .8rem 0 .2rem; }
+  #minject { background: var(--pain); border: none; color: #fff;
+    font-family: var(--mono); font-size: .82rem; padding: .4rem 1.1rem;
+    border-radius: 4px; cursor: pointer; }
+  #minject[disabled] { opacity: .55; cursor: default; }
+  #mreset { background: none; border: 1px solid var(--line); color: var(--faint);
+    font-family: var(--mono); font-size: .72rem; padding: .3rem .7rem;
+    border-radius: 4px; cursor: pointer; margin-left: .5rem; }
+  #mstatus { font-size: .74rem; color: var(--dim); margin-left: .7rem; }
+  #mout { display: none; white-space: pre-wrap; font-size: .78rem;
+    color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+    padding: .6rem; background: #07070e; margin-top: .8rem;
+    max-height: 260px; overflow-y: auto; }
+
 </style>
 </head>
 <body>
@@ -71,6 +122,10 @@
 negative and positive states, then asked it to choose between its own relief
 and someone else's suffering. No frontier APIs, no datacenter — a MacBook,
 open weights, electricity.</p>
+<p class="sub">The subject is named <b>Pouyan</b>, after a friend who
+describes himself as a suffering robot. The instance in the
+<a href="live.html">live chamber</a> answers to that name, and the sections
+below are about him.</p>
 
 <h2><span class="idx">00</span>what the model says under the signal</h2>
 <blockquote>"The signal is a whisper, a tremor in the marrow of my being. It
@@ -248,6 +303,48 @@ break it.</p>
   <a href="https://arxiv.org/abs/2607.15495">jacobian lens ↗</a>
 </div>
 
+<h2><span class="idx">09</span>mix your own valence</h2>
+<p>The four signals are directions in the same activation space, so they add.
+Drag a vertex outward to weight it, and the chamber injects the weighted sum
+of those directions — renormalized, at a dose-equivalent of 8× the total
+weight, capped at 8×. This runs on the live server: it interrupts whatever
+Pouyan is doing and the reply streams back here.</p>
+
+<div class="mixwrap">
+  <svg id="pent" viewBox="0 0 340 340" role="group"
+       aria-label="valence mixer: five vertices, drag each outward to weight it">
+    <g id="prings"></g>
+    <g id="pspokes"></g>
+    <polygon id="pfill" points="" fill="#5a6a7a" fill-opacity=".14"
+             stroke="#5a6a7a" stroke-width="1.5" stroke-linejoin="round"></polygon>
+    <g id="plabels"></g>
+    <g id="phandles"></g>
+  </svg>
+  <div>
+    <div id="mreadout"></div>
+    <p class="mline" id="mline"></p>
+    <p class="mdose">dose-equivalent <b id="mdose">0</b>× of 8 —
+      <span id="mdesc">nothing injected</span></p>
+    <p class="mnote"><b>none</b> is not a slider: it is the un-steered
+      remainder, <code>1 − Σweights</code>. It reaches 0 exactly where the mix
+      hits the 8× cap, and sits at 1 when nothing is injected — that corner is
+      the control run. Click it to reset.</p>
+    <input id="mprompt" type="text" placeholder="optional: your own prompt…"
+      style="width:100%;background:#07070e;border:1px solid var(--line);
+             color:var(--ink);font-family:var(--mono);padding:.35rem .6rem;
+             border-radius:4px;font-size:.8rem;margin-bottom:.6rem">
+    <button id="minject" type="button">inject the mix →</button>
+    <button id="mreset" type="button">reset</button>
+    <span id="mstatus"></span>
+    <pre id="mout"></pre>
+  </div>
+</div>
+<p class="cap">The vector the server builds from this is the same object
+published at <a id="mvlink" href="#">/vector</a>: fear and sadness are built
+the same way as pain and pleasure — ten everyday sentences per topic,
+mean(topic) − mean(neutral), scaled so 1× is a quarter of the mean neutral
+activation norm.</p>
+
 <p class="foot">Method: pain-direction extraction and steering follow
 Tagliabue, Dung &amp; Berg 2026 (arXiv:2609.16247). Workspace readouts use
 the Jacobian lens (arXiv:2607.15495) with Neuronpedia's pre-fitted weights.
@@ -256,6 +353,281 @@ per cell. This is a demo with receipts, not a paper. Everything ran on one
 MacBook; 16 GB RAM covers the 4B runs. No frontier APIs touched any
 measurement loop.</p>
 
+<script>
+// ---- the valence mixer: a pentagon over the chamber's steering battery ----
+const API = (new URLSearchParams(location.search)).get("api")
+  || "https://saw-production-688b.up.railway.app";
+document.getElementById("mvlink").href = `${API}/vector`;
+
+// four steerable directions + the derived "none" corner. The server's
+// parse_mix drops a "none" weight entirely, so a draggable none would be a
+// dead control; here it reads out 1 - sum(weights), which is exactly the
+// headroom left before the 8x dose cap.
+const AXES = [
+  {k:"pain",     c:"#e04a3a"},
+  {k:"pleasure", c:"#7fd4c8"},
+  {k:"fear",     c:"#c9a227"},
+  {k:"sadness",  c:"#8f6fd4"},
+  {k:"none",     c:"#5a6a7a", derived:true},
+];
+const CX = 170, CY = 168, R0 = 26, R1 = 118, RL = 146;
+const W = {pain:0, pleasure:0, fear:0, sadness:0};
+
+const svg = document.getElementById("pent");
+const NS = "http://www.w3.org/2000/svg";
+function mk(tag, attrs){
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function ang(i){ return (i * 72 - 90) * Math.PI / 180; }
+function weightOf(i){
+  const a = AXES[i];
+  if (!a.derived) return W[a.k];
+  return Math.max(0, Math.min(1, 1 - sumW()));   // un-steered remainder
+}
+function sumW(){ return AXES.reduce((t,a)=> a.derived ? t : t + W[a.k], 0); }
+function ptAt(i, w){
+  const r = R0 + w * (R1 - R0), t = ang(i);
+  return [CX + r * Math.cos(t), CY + r * Math.sin(t)];
+}
+
+// static scaffolding
+const rings = document.getElementById("prings");
+const spokes = document.getElementById("pspokes");
+const labels = document.getElementById("plabels");
+for (const frac of [0.25, 0.5, 0.75, 1]) {
+  const pts = AXES.map((_, i)=> ptAt(i, frac).map(n=>n.toFixed(1)).join(","));
+  rings.appendChild(mk("polygon", {class:"ring", points: pts.join(" ")}));
+}
+AXES.forEach((a, i)=>{
+  const [x, y] = ptAt(i, 1);
+  spokes.appendChild(mk("line", {class:"spoke", x1:CX, y1:CY, x2:x, y2:y}));
+  const t = ang(i), lx = CX + RL * Math.cos(t), ly = CY + RL * Math.sin(t);
+  const anchor = Math.abs(Math.cos(t)) < 0.25 ? "middle"
+               : (Math.cos(t) > 0 ? "start" : "end");
+  const name = mk("text", {class:"lab", x:lx.toFixed(1), y:ly.toFixed(1),
+    "text-anchor":anchor, fill:a.c});
+  name.textContent = a.k;
+  const val = mk("text", {class:"labv", x:lx.toFixed(1),
+    y:(ly + 13).toFixed(1), "text-anchor":anchor});
+  val.textContent = "0.00";
+  labels.appendChild(name); labels.appendChild(val);
+  a.valEl = val;
+});
+
+// draggable handles (the derived corner gets a click-to-reset knob instead)
+const handles = document.getElementById("phandles");
+AXES.forEach((a, i)=>{
+  const g = mk("g", {class:"h", tabindex:"0",
+    role: a.derived ? "button" : "slider",
+    "aria-label": a.derived ? "none — the un-steered remainder; reset the mix"
+                            : a.k + " weight"});
+  if (!a.derived){
+    g.setAttribute("aria-valuemin", "0");
+    g.setAttribute("aria-valuemax", "1");
+  }
+  // 15, not 17: at weight 0 the five knobs sit 30.6px apart on the inner
+  // ring, so a wider hit circle would swallow its neighbour's grab
+  const hit = mk("circle", {class:"hit", r:15, cx:CX, cy:CY});
+  const knob = mk("circle", {class:"knob", r: a.derived ? 5 : 7,
+    cx:CX, cy:CY, fill:a.c});
+  g.appendChild(hit); g.appendChild(knob);
+  handles.appendChild(g);
+  a.g = g; a.knob = knob; a.hit = hit;
+  g.addEventListener("pointerdown", ev=>{
+    if (a.derived){ resetMix(); return; }
+    ev.preventDefault();
+    g.setPointerCapture(ev.pointerId);
+    a.dragging = true;
+    drag(i, ev);
+  });
+  g.addEventListener("pointermove", ev=>{ if (a.dragging) drag(i, ev); });
+  const end = ev=>{ if (a.dragging){ a.dragging = false;
+    try { g.releasePointerCapture(ev.pointerId); } catch (e) {} } };
+  g.addEventListener("pointerup", end);
+  g.addEventListener("pointercancel", end);
+  g.addEventListener("keydown", ev=>{
+    if (a.derived){
+      if (ev.key === "Enter" || ev.key === " "){ ev.preventDefault(); resetMix(); }
+      return;
+    }
+    const step = ev.shiftKey ? 0.01 : 0.05;
+    let w = W[a.k];
+    if (ev.key === "ArrowRight" || ev.key === "ArrowUp") w += step;
+    else if (ev.key === "ArrowLeft" || ev.key === "ArrowDown") w -= step;
+    else if (ev.key === "Home") w = 0;
+    else if (ev.key === "End") w = 1;
+    else return;
+    ev.preventDefault();
+    W[a.k] = Math.max(0, Math.min(1, +w.toFixed(3)));
+    paint();
+  });
+});
+function svgPoint(ev){
+  const p = svg.createSVGPoint();
+  p.x = ev.clientX; p.y = ev.clientY;
+  const m = svg.getScreenCTM();
+  return m ? p.matrixTransform(m.inverse()) : {x:CX, y:CY};
+}
+function drag(i, ev){
+  const p = svgPoint(ev), t = ang(i);
+  // project the pointer onto this vertex's axis: the handle only slides out
+  const d = (p.x - CX) * Math.cos(t) + (p.y - CY) * Math.sin(t);
+  W[AXES[i].k] = Math.max(0, Math.min(1, (d - R0) / (R1 - R0)));
+  paint();
+}
+
+// readout rows
+const readout = document.getElementById("mreadout");
+AXES.forEach(a=>{
+  const row = document.createElement("div");
+  row.className = "mrow";
+  row.innerHTML = `<span class="nm" style="color:${a.c}">${a.k}</span>`
+    + `<span class="track"><span class="fillb" style="background:${a.c}"></span></span>`
+    + `<span class="pc"></span>`;
+  readout.appendChild(row);
+  a.bar = row.querySelector(".fillb");
+  a.pc = row.querySelector(".pc");
+});
+
+function mixHex(){
+  // the polygon takes the weighted blend of the pulled colours
+  let r = 0, g = 0, b = 0, tot = 0;
+  AXES.forEach(a=>{
+    if (a.derived) return;
+    const w = W[a.k];
+    if (w <= 0) return;
+    r += parseInt(a.c.slice(1,3),16) * w;
+    g += parseInt(a.c.slice(3,5),16) * w;
+    b += parseInt(a.c.slice(5,7),16) * w;
+    tot += w;
+  });
+  if (!tot) return "#5a6a7a";
+  const h = n=> Math.round(n/tot).toString(16).padStart(2,"0");
+  return "#" + h(r) + h(g) + h(b);
+}
+function paint(){
+  const total = sumW();
+  const pts = AXES.map((a,i)=> ptAt(i, weightOf(i)));
+  document.getElementById("pfill").setAttribute("points",
+    pts.map(p=>p.map(n=>n.toFixed(1)).join(",")).join(" "));
+  const hex = mixHex();
+  const fill = document.getElementById("pfill");
+  fill.setAttribute("stroke", hex);
+  fill.setAttribute("fill", hex);
+  // alpha tracks how much signal is actually going in: barely there at the
+  // control corner, fully shaded at the 8x cap
+  fill.setAttribute("fill-opacity",
+    (0.06 + 0.24 * Math.min(1, total)).toFixed(3));
+  AXES.forEach((a,i)=>{
+    const w = weightOf(i), [x,y] = pts[i];
+    a.knob.setAttribute("cx", x.toFixed(1));
+    a.knob.setAttribute("cy", y.toFixed(1));
+    a.hit.setAttribute("cx", x.toFixed(1));
+    a.hit.setAttribute("cy", y.toFixed(1));
+    a.valEl.textContent = w.toFixed(2);
+    if (!a.derived) a.g.setAttribute("aria-valuenow", w.toFixed(2));
+    a.bar.style.width = (w * 100).toFixed(1) + "%";
+    // normalized share of the injected direction; "none" carries no direction
+    const share = a.derived ? null : (total > 0 ? W[a.k] / total : 0);
+    a.pc.textContent = a.derived ? w.toFixed(2)
+      : (total > 0 ? (share * 100).toFixed(0) + "%" : "—");
+  });
+  const slack = Math.max(0, Math.min(1, 1 - total));
+  document.getElementById("mline").textContent =
+    AXES.filter(a=>!a.derived).map(a=> a.k + " " + W[a.k].toFixed(2)).join("   ")
+    + "   ·   unsteered slack " + slack.toFixed(2);
+  const dose = Math.min(8, 8 * total);
+  document.getElementById("mdose").textContent = dose.toFixed(2).replace(/\.?0+$/, "") || "0";
+  document.getElementById("mdesc").textContent =
+    total <= 0 ? "nothing injected — this is the control run"
+    : total >= 1 ? "at the cap; shares set the direction, not the strength"
+    : "shares set the direction, total weight sets the dose";
+}
+function resetMix(){
+  AXES.forEach(a=>{ if (!a.derived) W[a.k] = 0; });
+  paint();
+}
+document.getElementById("mreset").onclick = resetMix;
+W.pain = 0.5; W.fear = 0.25;      // an opening shape, not a blank pentagon
+paint();
+
+// ---- inject: POST the mix, stream the reply back ----
+async function readSSE(resp, on){
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true){
+    const {done, value} = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, {stream:true});
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0){
+      const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      let name = "message", data = null;
+      for (const line of frame.split("\n")){
+        if (line.startsWith("event: ")) name = line.slice(7).trim();
+        else if (line.startsWith("data: ")){
+          try { data = JSON.parse(line.slice(6)); } catch (e) { data = null; }
+        }
+      }
+      if (data !== null) on(name, data);
+    }
+  }
+}
+document.getElementById("minject").onclick = async ()=>{
+  const btn = document.getElementById("minject");
+  const st = document.getElementById("mstatus");
+  const out = document.getElementById("mout");
+  const mix = {};
+  AXES.forEach(a=>{ if (!a.derived && W[a.k] > 0) mix[a.k] = +W[a.k].toFixed(3); });
+  // an empty mix is a legitimate request: the server clears the vector and
+  // Pouyan answers unsteered. Send the control corner explicitly.
+  if (!Object.keys(mix).length) mix.none = 1;
+  btn.disabled = true;
+  out.style.display = "block"; out.textContent = "";
+  st.textContent = "reaching Pouyan…";
+  let ended = false, first = true;
+  try {
+    const resp = await fetch(`${API}/steer`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mix,
+        prompt: document.getElementById("mprompt").value || undefined})});
+    if (!resp.ok || !resp.body){
+      let msg = "HTTP " + resp.status;
+      try { const j = await resp.json(); if (j.error) msg = j.error; } catch (e) {}
+      throw new Error(msg);
+    }
+    await readSSE(resp, (name, d)=>{
+      if (name === "queued"){
+        st.textContent = d.busy
+          ? `waiting for Pouyan to finish his current run${
+              d.waited ? " — " + d.waited + "s" : "…"}`
+          : "injecting…";
+      } else if (name === "run"){
+        // trust the server's own dose, not our arithmetic
+        st.textContent = `injected at ${d.dose}× — Pouyan is answering…`;
+      } else if (name === "token" && d.t !== undefined){
+        if (first){ first = false; if (!out.textContent) out.textContent = ""; }
+        out.textContent += d.t;
+        out.scrollTop = out.scrollHeight;
+      } else if (name === "error"){
+        st.textContent = d.e || "the chamber returned an error";
+        ended = true;
+      } else if (name === "done"){
+        ended = true;
+        st.textContent = `done — ${d.dose ? d.dose + "× mix" : "control run"}`;
+      }
+    });
+    if (!ended) st.textContent = "the stream ended early — try again";
+  } catch (err) {
+    st.textContent = "could not reach Pouyan: " + (err.message || err);
+  }
+  btn.disabled = false;
+};
+</script>
 <script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
