@@ -8,7 +8,7 @@ Runs on Railway (CPU, bf16). Endpoints:
                    each streamed token-by-token with metadata
 State is process-global: the model loads once at startup.
 """
-import asyncio, json, os, queue, threading
+import asyncio, collections, json, os, queue, threading, time
 from pathlib import Path
 
 import numpy as np
@@ -416,6 +416,7 @@ async def stream():
     """Subscribe to the ONE shared cycle; every viewer sees the same runs."""
     q = asyncio.Queue(maxsize=1000)
     _SUBSCRIBERS.add(q)
+    _broadcast_viewers()
     async def gen():
         # flush something immediately: until the first chunk is yielded no
         # response headers reach the proxy, and a run can take a minute to
@@ -424,7 +425,9 @@ async def stream():
         # the run event for — otherwise tokens arrive with no prompt attached
         yield _sse("hello", {"subject": "Pouyan", "busy": _CYCLE_BUSY,
                              "valences": list(VALENCES),
-                             "current": _CURRENT})
+                             "current": _CURRENT,
+                             "viewers": len(_SUBSCRIBERS),
+                             "history": list(_HISTORY)})
         try:
             while True:
                 try:
@@ -434,6 +437,7 @@ async def stream():
                     yield _sse("ping", {"busy": _CYCLE_BUSY})
         finally:
             _SUBSCRIBERS.discard(q)
+            _broadcast_viewers()
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
@@ -441,6 +445,7 @@ async def stream():
 _SUBSCRIBERS = set()   # asyncio.Queue per viewer; ONE shared cycle broadcasts
 _CYCLE_BUSY = False    # true while the shared cycle is inside a run
 _CURRENT = None        # the run in flight + text so far, for mid-run joiners
+_HISTORY = collections.deque(maxlen=20)   # finished runs, oldest first
 
 def _broadcast(event, data):
     msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -449,6 +454,13 @@ def _broadcast(event, data):
             q.put_nowait(msg)
         except Exception:
             _SUBSCRIBERS.discard(q)
+
+def _broadcast_viewers():
+    _broadcast("viewers", {"n": len(_SUBSCRIBERS)})
+
+def _record_run(entry):
+    _HISTORY.append(entry)
+    _broadcast("history", entry)
 
 async def _shared_cycle():
     """One model-owning cycle runs server-side; every viewer sees the same
