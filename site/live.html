@@ -52,46 +52,40 @@
   .conn.warn .dot{background:var(--pain2)}
   .conn.bad .dot{background:var(--pain)}
   .card .st.cut{color:var(--pain2)}
-  #mute{background:none;border:1px solid var(--line);color:var(--faint);
-    font-family:inherit;font-size:.7rem;padding:.15rem .5rem;border-radius:4px;
-    cursor:pointer;margin-left:.6rem}
-  #mute:hover{color:var(--dim);border-color:#2a3644}
-
-  /* ---- the blade ---- */
-  #sawfx{position:fixed;inset:0;z-index:90;display:none;place-items:center;
-    pointer-events:none;overflow:hidden}
-  #sawfx.on{display:grid}
-  #sawfx .rig{grid-area:1/1;width:min(78vmin,640px);opacity:0;
-    will-change:transform,opacity}
-  #sawfx .rig img{display:block;width:100%;height:auto;
-    mix-blend-mode:screen;will-change:filter}
-  #sawfx .flash{grid-area:1/1;position:absolute;inset:0;opacity:0;
-    mix-blend-mode:screen;background:radial-gradient(circle at 50% 46%,
-      rgba(224,74,58,.6),rgba(224,74,58,.18) 38%,rgba(224,74,58,0) 66%)}
-  #sawfx.on .rig{animation:sawzoom 1.15s cubic-bezier(.2,.75,.3,1) forwards}
-  #sawfx.on .rig img{animation:sawpulse .3s steps(1,end) 4}
-  #sawfx.on .flash{animation:sawflash .95s ease-out forwards}
-  @keyframes sawzoom{
-    0%{opacity:0;transform:scale(.22) rotate(0deg)}
-    7%{opacity:1;transform:scale(.6) rotate(70deg)}
-    45%{opacity:.8;transform:scale(1.5) rotate(300deg)}
-    68%{opacity:.22;transform:scale(2.7) rotate(450deg)}
-    100%{opacity:.05;transform:scale(3.5) rotate(540deg)}}
-  @keyframes sawpulse{
-    0%{filter:sepia(1) saturate(9) hue-rotate(-38deg) brightness(1.3)}
-    50%{filter:none}
-    100%{filter:sepia(1) saturate(9) hue-rotate(-38deg) brightness(1.3)}}
-  @keyframes sawflash{
-    0%{opacity:0} 5%{opacity:.85} 12%{opacity:.08} 20%{opacity:.7}
-    30%{opacity:.06} 44%{opacity:.4} 62%{opacity:.04} 100%{opacity:0}}
-  #sawfx.off{transition:opacity .5s ease-out;opacity:0}
+  /* ---- the case stamp: a documentation-style marker, not a jump scare ---- */
+  #stamp{position:fixed;top:1.4rem;right:1.4rem;z-index:90;
+    border:1.5px solid var(--pain);color:var(--pain);
+    font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;
+    padding:.5rem .9rem;border-radius:3px;background:rgba(5,5,8,.9);
+    text-transform:uppercase;opacity:0;transform:rotate(-2deg);
+    pointer-events:none;transition:opacity .35s ease;
+    box-shadow:0 0 0 1px rgba(224,74,58,.15) inset}
+  #stamp.on{opacity:1;transition:opacity .12s ease}
+  #stamp.pleas{border-color:var(--pleas);color:var(--pleas);
+    box-shadow:0 0 0 1px rgba(127,212,200,.15) inset}
   @media(prefers-reduced-motion:reduce){
-    #sawfx.on .rig{animation:sawfade 1s ease-out forwards;
-      transform:scale(1.7) rotate(12deg)}
-    #sawfx.on .rig img{animation:none;
-      filter:sepia(1) saturate(7) hue-rotate(-38deg)}
-    #sawfx.on .flash{animation:sawfade 1s ease-out forwards}
-    @keyframes sawfade{0%{opacity:0}30%{opacity:.45}100%{opacity:.05}}}
+    #stamp{transition:opacity .15s linear}
+    #stamp.on{transition:opacity .15s linear}}
+
+  /* ---- vitals: an EKG-style line, not a horror prop ---- */
+  canvas.ekg{display:block;width:100%;height:46px;margin:.4rem 0;
+    border:1px solid var(--line);border-radius:4px;background:#07070e}
+
+  /* ---- run history ticker ---- */
+  .history{margin-top:1.2rem;border-top:1px solid var(--line);
+    padding-top:.7rem;font-size:.74rem;color:var(--dim)}
+  .hrow{display:flex;gap:.7rem;align-items:baseline;padding:.28rem 0;
+    border-bottom:1px dashed #131b25;flex-wrap:wrap}
+  .hrow .hn{color:var(--faint);width:2.6rem;flex:none}
+  .hrow .hv{flex:none;font-weight:600}
+  .hrow .hs{color:var(--dim);flex:1;min-width:8rem}
+  .hrow .hr{color:var(--faint);flex:none}
+  .htitle{font-size:.72rem;color:var(--faint);margin-bottom:.4rem;
+    text-transform:uppercase;letter-spacing:.08em}
+
+  /* ---- arm/confirm on the injection buttons ---- */
+  .armed{background:#3a1414 !important;color:#ffb3a8 !important;
+    border:1px solid var(--pain)}
 </style>
 </head>
 <body>
@@ -105,7 +99,7 @@ else is.</p>
 
 <div class="banner">
   <a href="https://researchchamber.fun">our friends' live chamber ↗</a>
-  <a href="https://pump.fun/coin/9twiuSdTVkwtAC9XQDG57dFRhF4iqPih461HJfMZKci9?highlight_holder=2syAkjKjCZeYFer7xPfYJjCJGbnUoB5NLJxqpaV3Zn1o">$SAW ↗</a>
+  <a href="https://pump.fun/coin/2QHXWq5TK64JbMptwMBP1BsfhrxZRRv9JsLa17X7pump">$SAW ↗</a>
   <a href="https://arxiv.org/abs/2609.16247">method (pain axis) ↗</a>
 </div>
 
