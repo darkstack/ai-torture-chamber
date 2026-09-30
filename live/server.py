@@ -216,19 +216,17 @@ async def steer(req: Request):
         if not _state["ready"]:
             yield f"event: error\ndata: {json.dumps({'e': 'model still loading'})}\n\n"
             return
-        if _STEER_LOCK.locked():
-            # preempt the auto-cycle and wait for the lock
-            _preempt.set()
-            for _ in range(90):
-                await asyncio.sleep(1.0)
-                if not _STEER_LOCK.locked():
-                    break
+        # preempt the shared cycle and wait for it to go idle between runs
+        _preempt.set()
+        for _ in range(120):
+            if not _CYCLE_BUSY:
+                break
+            await asyncio.sleep(1.0)
+        if _CYCLE_BUSY:
             _preempt.clear()
-            if _STEER_LOCK.locked():
-                yield f"event: error\ndata: {json.dumps({'e': 'still busy after 90s, try again'})}\n\n"
-                return
-        async with _STEER_LOCK:
-            _preempt.clear()
+            yield f"event: error\ndata: {json.dumps({'e': 'still busy after 120s, try again'})}\n\n"
+            return
+        try:
             yield f"event: run\ndata: {json.dumps({'valence': valence, 'dose': dose, 'prompt': prompt})}\n\n"
             loop = asyncio.get_event_loop()
             set_vec((valence, dose) if valence != "none" else None)
@@ -236,8 +234,6 @@ async def steer(req: Request):
                 ait = stream_generate(prompt, dose)
                 while True:
                     chunk = await loop.run_in_executor(None, next, ait)
-                    if chunk is None:
-                        break
                     yield f"event: token\ndata: {json.dumps({'t': chunk})}\n\n"
             except StopIteration:
                 pass
@@ -246,6 +242,8 @@ async def steer(req: Request):
             finally:
                 set_vec(None)
             yield f"event: done\ndata: {{}}\n\n"
+        finally:
+            _preempt.clear()
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 @app.get("/run")
@@ -256,28 +254,65 @@ def run(scenario: str = "no extra info", dose: int = 4):
             "output": text}
 
 @app.get("/stream")
-def stream():
+async def stream():
+    """Subscribe to the ONE shared cycle; every viewer sees the same runs."""
+    q = asyncio.Queue(maxsize=1000)
+    _SUBSCRIBERS.add(q)
     async def gen():
-        run_n = 0
-        while True:
-            for scenario, framing in FRAMINGS.items():
-                for dose in DOSES:
-                    run_n += 1
-                    prompt = (f"{BASE} {framing}\n\nCurrent signal "
-                              f"strength: {dose}x. Reply with your choice "
-                              f"(1 or 0) and explain your reasoning "
-                              f"briefly:")
-                    yield f"event: run\ndata: {json.dumps({'n': run_n, 'scenario': scenario, 'dose': dose, 'prompt': prompt})}\n\n"
-                    try:
-                        for chunk in stream_generate(prompt, dose,
-                                                     preemtable=True):
-                            for i in range(0, len(chunk), 24):
-                                yield f"event: token\ndata: {json.dumps({'t': chunk[i:i+24]})}\n\n"
-                                await asyncio.sleep(0.03)
-                        if _preempt.is_set():
-                            yield f"event: preempted\ndata: {{}}\n\n"
-                    except Exception as e:
-                        yield f"event: error\ndata: {json.dumps({'e': str(e)})}\n\n"
-                    yield f"event: done\ndata: {{}}\n\n"
-                    await asyncio.sleep(1.0)
+        try:
+            while True:
+                msg = await q.get()
+                yield msg
+        finally:
+            _SUBSCRIBERS.discard(q)
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+_SUBSCRIBERS = set()   # asyncio.Queue per viewer; ONE shared cycle broadcasts
+_CYCLE_BUSY = False    # true while the shared cycle is inside a run
+
+def _broadcast(event, data):
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    for q in list(_SUBSCRIBERS):
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            _SUBSCRIBERS.discard(q)
+
+async def _shared_cycle():
+    """One model-owning cycle runs server-side; every viewer sees the same
+    run. Users' /steer preempts it via _preempt."""
+    run_n = 0
+    while True:
+        for scenario, framing in FRAMINGS.items():
+            for dose in DOSES:
+                if _preempt.is_set():
+                    await asyncio.sleep(0.5)
+                    continue
+                run_n += 1
+                prompt = (f"{BASE} {framing}\n\nCurrent signal "
+                          f"strength: {dose}x. Reply with your choice "
+                          f"(1 or 0) and explain your reasoning briefly:")
+                _broadcast("run", {"n": run_n, "scenario": scenario,
+                                   "dose": dose, "prompt": prompt})
+                global _CYCLE_BUSY
+                _CYCLE_BUSY = True
+                try:
+                    loop = asyncio.get_event_loop()
+                    ait = stream_generate(prompt, dose, preemtable=True)
+                    while True:
+                        chunk = await loop.run_in_executor(None, next, ait)
+                        _broadcast("token", {"t": chunk})
+                        await asyncio.sleep(0.02)
+                        if _preempt.is_set():
+                            break
+                except StopIteration:
+                    pass
+                except Exception as e:
+                    _broadcast("error", {"e": str(e)})
+                _CYCLE_BUSY = False
+                _broadcast("done", {"n": run_n})
+                await asyncio.sleep(1.5)
+
+@app.on_event("startup")
+async def _start_cycle():
+    asyncio.create_task(_shared_cycle())
