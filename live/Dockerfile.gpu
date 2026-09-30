@@ -1,0 +1,12 @@
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir "torch>=2.4" --index-url https://download.pytorch.org/whl/cu121
+
+COPY server.py .
+
+EXPOSE 8000
+ENV CHAMBER_DEVICE=cuda CHAMBER_DTYPE=float16 CHAMBER_LAYER=18
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}"]
